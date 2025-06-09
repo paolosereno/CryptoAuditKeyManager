@@ -13,6 +13,7 @@
 #include "keymanagerwindow.h"
 #include "database.h"
 #include "forensicerrorhandler.h"
+#include "securityutils.h"
 
 // Helper function to securely clear sensitive data
 static void secureClear(QByteArray &data) {
@@ -179,11 +180,10 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        // Validate password
-        QRegularExpression passwordRegex("^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[!@#$%^&*_])[A-Za-z\\d!@#$%^&*_]{8,}$");
-        if (!passwordRegex.match(password).hasMatch()) {
+        // Validate password using centralized function
+        if (!SecurityUtils::validatePassword(password, &tempErrorHandler)) {
             QMessageBox::critical(nullptr, QObject::tr("Setup Error"),
-                                  QObject::tr("Password must be at least 8 characters long and include uppercase, lowercase, numbers, and special characters."));
+                                  QObject::tr("Password must be at least 12 characters long and include uppercase, lowercase, numbers, and special characters."));
             tempErrorHandler.logToAuditTrail(QObject::tr("Setup Attempt"), QObject::tr("Failed: Invalid password for user %1").arg(username));
             cleanupOpenSSL();
             return 1;

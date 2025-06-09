@@ -4,6 +4,7 @@
 #include <QMainWindow>
 #include <openssl/evp.h>
 #include "forensicerrorhandler.h"
+#include "securityutils.h"
 #include <memory>
 
 class QLineEdit;
@@ -47,11 +48,10 @@ private:
     QString m_lastPublicKeyPath;
 
     void setupUi();
-    bool validatePassword(const QString &password) const;
     bool validateKeyLength(int keyLength, const QString &keyType) const;
     bool validateComment(const QString &comment) const;
     bool validateKeyType(const QString &keyType) const;
-    bool isKeyTypeSupportedForFormat(const QString &keyType, const QString &format) const; // Nuova funzione per validazione formato
+    bool isKeyTypeSupportedForFormat(const QString &keyType, const QString &format) const;
 };
 
 #endif // KEYMANAGERWINDOW_H

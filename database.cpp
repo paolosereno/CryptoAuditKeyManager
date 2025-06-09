@@ -147,17 +147,6 @@ bool Database::isValidUsername(const QString &username) const {
     return regex.match(username).hasMatch();
 }
 
-bool Database::validatePassword(const QString &password) const {
-    QRegularExpression regex("^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[!@#$%^&*_])[A-Za-z\\d!@#$%^&*_]{12,}$");
-    bool isValid = regex.match(password).hasMatch();
-    if (!isValid) {
-        m_errorHandler->handleError(nullptr, tr("Password Validation"),
-                                    tr("Password must be at least 12 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character (!@#$%^&*_)."),
-                                    ForensicErrorHandler::Severity::Warning);
-    }
-    return isValid;
-}
-
 bool Database::registerUser(const QString &username, const QString &password) {
     if (!isValidUsername(username)) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Invalid username format: must be 3-50 alphanumeric characters or underscores"), ForensicErrorHandler::Severity::Warning);
@@ -165,7 +154,7 @@ bool Database::registerUser(const QString &username, const QString &password) {
     }
 
     // Validazione della password
-    if (!validatePassword(password)) {
+    if (!SecurityUtils::validatePassword(password, m_errorHandler)) {
         return false;
     }
 

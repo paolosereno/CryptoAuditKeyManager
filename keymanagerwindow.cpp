@@ -136,7 +136,7 @@ void KeyManagerWindow::setupUi() {
         } else if (keyType == "Ed25519") {
             keyLengthCombo->addItems({"256"});
             keyLengthCombo->setCurrentText("256");
-            keyFormatCombo->addItems({"PEM", "SSH"}); // DER e PKCS#8 non supportati per Ed25519
+            keyFormatCombo->addItems({"PEM", "SSH"});
         }
         keyFormatCombo->setCurrentText("PEM");
     });
@@ -149,17 +149,6 @@ void KeyManagerWindow::handleLogout() {
     errorHandler->logToAuditTrail(tr("Logout"), tr("User %1 logged out").arg(m_username));
     emit logoutRequested();
     close();
-}
-
-bool KeyManagerWindow::validatePassword(const QString &password) const {
-    QRegularExpression regex("^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[!@#$%^&*])[A-Za-z\\d!@#$%^&*]{12,}$");
-    bool isValid = regex.match(password).hasMatch();
-    if (!isValid) {
-        errorHandler->handleError(this, tr("Password Validation"),
-                                  tr("Password must be at least 12 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character (!@#$%^&*)."),
-                                  ForensicErrorHandler::Severity::Warning);
-    }
-    return isValid;
 }
 
 bool KeyManagerWindow::validateKeyLength(int keyLength, const QString &keyType) const {
@@ -197,10 +186,7 @@ bool KeyManagerWindow::isKeyTypeSupportedForFormat(const QString &keyType, const
 void KeyManagerWindow::generateAndSaveKey() {
     // Validazione della password
     QString password = passwordEdit->text();
-    if (!validatePassword(password)) {
-        errorHandler->handleError(this, tr("Generate Key"),
-                                  tr("Password must be at least 12 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character (!@#$%^&*)."),
-                                  ForensicErrorHandler::Severity::Warning);
+    if (!SecurityUtils::validatePassword(password, errorHandler)) {
         return;
     }
 
@@ -573,8 +559,7 @@ void KeyManagerWindow::verifyKey() {
     }
 
     QString password = QInputDialog::getText(this, tr("Key Password"), tr("Enter password for private key:"), QLineEdit::Password, QString());
-    if (!validatePassword(password)) {
-        errorHandler->handleError(this, tr("Verify Key"), tr("Invalid password"), ForensicErrorHandler::Severity::Warning);
+    if (!SecurityUtils::validatePassword(password, errorHandler)) {
         return;
     }
 

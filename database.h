@@ -7,6 +7,7 @@
 #include <argon2.h>
 #include <openssl/rand.h>
 #include "forensicerrorhandler.h"
+#include "securityutils.h"
 
 class Database : public QObject {
     Q_OBJECT
@@ -29,7 +30,6 @@ private:
     bool openDatabase();
     void closeDatabase();
     bool isValidUsername(const QString &username) const;
-    bool validatePassword(const QString &password) const; // Aggiunta dichiarazione
     QString m_dbPath;
     QSqlDatabase m_db;
     ForensicErrorHandler *m_errorHandler;

@@ -12,12 +12,14 @@ SOURCES += \
     database.cpp \
     forensicerrorhandler.cpp \
     keymanagerwindow.cpp \
-    main.cpp
+    main.cpp \
+    securityutils.cpp
 
 HEADERS += \
     database.h \
     forensicerrorhandler.h \
-    keymanagerwindow.h
+    keymanagerwindow.h \
+    securityutils.h
 
 FORMS +=
 
