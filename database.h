@@ -22,6 +22,7 @@ public:
     bool hasUsers();
     bool removeUser(const QString &username);
     bool userExists(const QString &username);
+    void cleanupLoginAttempts();
 
 private:
     bool createTables();

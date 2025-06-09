@@ -87,6 +87,14 @@ bool Database::createTables() {
         return false;
     }
 
+    success = query.exec("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)");
+    if (!success) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create users index: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return false;
+    }
+
     success = query.exec(
         "CREATE TABLE IF NOT EXISTS login_attempts ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -96,6 +104,14 @@ bool Database::createTables() {
         );
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create login_attempts table: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return false;
+    }
+
+    success = query.exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempt_time)");
+    if (!success) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create login_attempts index: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
         m_db.rollback();
         closeDatabase();
         return false;
@@ -331,7 +347,6 @@ void Database::logLoginAttempt(const QString &username, bool success) {
 
     if (!m_db.transaction()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Warning);
-        closeDatabase();
         return;
     }
 
@@ -341,6 +356,35 @@ void Database::logLoginAttempt(const QString &username, bool success) {
     query.bindValue(":success", success);
     if (!query.exec()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to log login attempt: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        m_db.rollback();
+        closeDatabase();
+        return;
+    }
+
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        m_db.rollback();
+    }
+
+    closeDatabase();
+}
+
+void Database::cleanupLoginAttempts() {
+    if (!openDatabase()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database for login attempts cleanup"), ForensicErrorHandler::Severity::Warning);
+        return;
+    }
+
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Warning);
+        closeDatabase();
+        return;
+    }
+
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM login_attempts WHERE attempt_time < datetime('now', '-1 day')");
+    if (!query.exec()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to clean up login attempts: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
         m_db.rollback();
         closeDatabase();
         return;
