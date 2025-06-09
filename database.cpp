@@ -82,7 +82,9 @@ bool Database::createTables() {
         );
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create users table: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -90,7 +92,9 @@ bool Database::createTables() {
     success = query.exec("CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)");
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create users index: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -104,7 +108,9 @@ bool Database::createTables() {
         );
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create login_attempts table: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -112,14 +118,18 @@ bool Database::createTables() {
     success = query.exec("CREATE INDEX IF NOT EXISTS idx_login_attempts_username_time ON login_attempts(username, attempt_time)");
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create login_attempts index: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -187,7 +197,9 @@ bool Database::registerUser(const QString &username, const QString &password) {
 #endif
     if (!randSuccess) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to generate random salt"), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -201,7 +213,9 @@ bool Database::registerUser(const QString &username, const QString &password) {
     secureClear(passwordBytes); // Securely clear password
     if (result != ARGON2_OK) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Argon2 hashing failed: %1").arg(result), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -219,14 +233,18 @@ bool Database::registerUser(const QString &username, const QString &password) {
     bool success = query.exec();
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to register user: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -258,7 +276,9 @@ bool Database::authenticateUser(const QString &username, const QString &password
     query.bindValue(":username", username);
     if (!query.exec() || !query.next()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("User not found or query failed: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -267,7 +287,9 @@ bool Database::authenticateUser(const QString &username, const QString &password
     QStringList parts = storedHash.split('$');
     if (parts.size() != 2) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Invalid stored hash format"), ForensicErrorHandler::Severity::Warning);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -291,7 +313,9 @@ bool Database::authenticateUser(const QString &username, const QString &password
     secureClear(passwordBytes); // Securely clear password
     if (result != ARGON2_OK) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Argon2 verification failed: %1").arg(result), ForensicErrorHandler::Severity::Warning);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -301,7 +325,9 @@ bool Database::authenticateUser(const QString &username, const QString &password
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -336,12 +362,19 @@ bool Database::isAccountLocked(const QString &username) {
         int failedAttempts = query.value(0).toInt();
         locked = failedAttempts >= 3;
     } else {
-        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check account lock status: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check account lock status: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
+        closeDatabase();
+        return true;
     }
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return true;
     }
@@ -363,6 +396,7 @@ void Database::logLoginAttempt(const QString &username, bool success) {
 
     if (!m_db.transaction()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Warning);
+        closeDatabase();
         return;
     }
 
@@ -372,14 +406,20 @@ void Database::logLoginAttempt(const QString &username, bool success) {
     query.bindValue(":success", success);
     if (!query.exec()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to log login attempt: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return;
     }
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Warning);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
+        closeDatabase();
+        return;
     }
 
     closeDatabase();
@@ -401,14 +441,20 @@ void Database::cleanupLoginAttempts() {
     query.prepare("DELETE FROM login_attempts WHERE attempt_time < datetime('now', '-1 day')");
     if (!query.exec()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to clean up login attempts: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return;
     }
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Warning);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
+        closeDatabase();
+        return;
     }
 
     closeDatabase();
@@ -434,11 +480,18 @@ bool Database::hasUsers() {
         hasUsers = count > 0;
     } else {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check for users: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
+        closeDatabase();
+        return false;
     }
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -470,14 +523,18 @@ bool Database::removeUser(const QString &username) {
     bool success = query.exec();
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to remove user: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
@@ -512,11 +569,18 @@ bool Database::userExists(const QString &username) {
         exists = count > 0;
     } else {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check if user exists: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
+        closeDatabase();
+        return false;
     }
 
     if (!m_db.commit()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        m_db.rollback();
+        if (!m_db.rollback()) {
+            m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to rollback transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        }
         closeDatabase();
         return false;
     }
