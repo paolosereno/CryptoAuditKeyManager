@@ -6,11 +6,12 @@
 #include <QSqlDatabase>
 #include <argon2.h>
 #include <openssl/rand.h>
+#include "forensicerrorhandler.h"
 
 class Database : public QObject {
     Q_OBJECT
 public:
-    explicit Database(const QString &dbPath, QObject *parent = nullptr);
+    explicit Database(const QString &dbPath, ForensicErrorHandler *errorHandler, QObject *parent = nullptr);
     ~Database();
 
     bool initialize();
@@ -20,15 +21,18 @@ public:
     void logLoginAttempt(const QString &username, bool success);
     bool hasUsers();
     bool removeUser(const QString &username);
-    bool userExists(const QString &username); // New function to check if a user exists
+    bool userExists(const QString &username);
 
 private:
     QString m_dbPath;
     QSqlDatabase m_db;
+    ForensicErrorHandler *m_errorHandler;
+    QString m_connectionName; // Added for unique connection tracking
 
     bool createTables();
     bool openDatabase();
     void closeDatabase();
+    bool isValidUsername(const QString &username) const; // Added for SQL injection prevention
 };
 
 #endif // DATABASE_H

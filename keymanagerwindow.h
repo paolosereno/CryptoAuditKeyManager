@@ -1,4 +1,3 @@
-// --- File: keymanagerwindow.h ---
 #ifndef KEYMANAGERWINDOW_H
 #define KEYMANAGERWINDOW_H
 
@@ -25,7 +24,8 @@ private slots:
     void verifyKey();
     void showAuditLog();
     void handleLogout();
-    void copyPublicKeyToClipboard(); // New: Slot for copying public key
+    void copyPublicKeyToClipboard();
+    void changeLanguage(const QString &locale); // New: Slot for language switching
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -37,11 +37,12 @@ private:
     QLineEdit *commentEdit;
     QComboBox *keyLengthCombo;
     QComboBox *keyFormatCombo;
+    QComboBox *languageCombo; // New: Combo box for language selection
     QPushButton *generateButton;
     QPushButton *verifyButton;
     QPushButton *showLogButton;
     QPushButton *logoutButton;
-    QPushButton *copyPublicKeyButton; // New: Button for copying public key
+    QPushButton *copyPublicKeyButton;
     QString m_lastPublicKeyPath;
 
     void setupUi();

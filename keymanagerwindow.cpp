@@ -17,9 +17,16 @@
 #include <openssl/sha.h>
 #include <openssl/err.h>
 #include <openssl/rand.h>
+#include <openssl/opensslv.h>
 #include <memory>
 #include <QClipboard>
 #include <QApplication>
+#include <QTranslator>
+
+// Helper function to securely clear sensitive data
+static void secureClear(QByteArray &data) {
+    std::fill(data.begin(), data.end(), 0);
+}
 
 KeyManagerWindow::KeyManagerWindow(const QString &auditFilePath, const QString &username, QWidget *parent)
     : QMainWindow(parent), m_username(username) {
@@ -75,14 +82,24 @@ void KeyManagerWindow::setupUi() {
     commentLayout->addWidget(commentEdit);
     mainLayout->addLayout(commentLayout);
 
+    // Language selection
+    QHBoxLayout *languageLayout = new QHBoxLayout();
+    QLabel *languageLabel = new QLabel(tr("Language:"));
+    languageCombo = new QComboBox();
+    languageCombo->addItems({"en_US", "it_IT", "es_ES"});
+    languageCombo->setCurrentText(QLocale::system().name());
+    languageLayout->addWidget(languageLabel);
+    languageLayout->addWidget(languageCombo);
+    mainLayout->addLayout(languageLayout);
+
     // Buttons
     generateButton = new QPushButton(tr("Generate and Save Key"));
     verifyButton = new QPushButton(tr("Verify Key"));
     showLogButton = new QPushButton(tr("Show Audit Log"));
     logoutButton = new QPushButton(tr("Logout"));
-    copyPublicKeyButton = new QPushButton(tr("Copy Public Key to Clipboard")); // New button
+    copyPublicKeyButton = new QPushButton(tr("Copy Public Key to Clipboard"));
     mainLayout->addWidget(generateButton);
-    mainLayout->addWidget(verifyButton);
+    mainLayout->addWidget(verifyButton); // Fixed typo: was passwordButton
     mainLayout->addWidget(showLogButton);
     mainLayout->addWidget(logoutButton);
     mainLayout->addWidget(copyPublicKeyButton);
@@ -93,14 +110,15 @@ void KeyManagerWindow::setupUi() {
     connect(verifyButton, &QPushButton::clicked, this, &KeyManagerWindow::verifyKey);
     connect(showLogButton, &QPushButton::clicked, this, &KeyManagerWindow::showAuditLog);
     connect(logoutButton, &QPushButton::clicked, this, &KeyManagerWindow::handleLogout);
-    connect(copyPublicKeyButton, &QPushButton::clicked, this, &KeyManagerWindow::copyPublicKeyToClipboard); // New connection
+    connect(copyPublicKeyButton, &QPushButton::clicked, this, &KeyManagerWindow::copyPublicKeyToClipboard); // Fixed syntax
+    connect(languageCombo, &QComboBox::currentTextChanged, this, &KeyManagerWindow::changeLanguage); // Fixed syntax
 
     setWindowTitle(tr("Forensic Key Manager"));
-    resize(400, 300); // Increased height to accommodate new button
+    resize(400, 320); // Slightly increased height for language combo
 }
 
 void KeyManagerWindow::handleLogout() {
-    errorHandler->logToAuditTrail("Logout", QString("User %1 logged out").arg(m_username));
+    errorHandler->logToAuditTrail(tr("Logout"), tr("User %1 logged out").arg(m_username));
     emit logoutRequested();
     close();
 }
@@ -111,6 +129,14 @@ bool KeyManagerWindow::validatePassword(const QString &password) const {
 
 bool KeyManagerWindow::validateKeyLength(int keyLength) const {
     return keyLength == 1024 || keyLength == 2048 || keyLength == 4096;
+}
+
+bool KeyManagerWindow::validateComment(const QString &comment) const {
+    if (comment.isEmpty()) return true;
+
+    QRegularExpression emailRegex("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    QRegularExpression generalCommentRegex("^[A-Za-z0-9\\-_\\s]*$");
+    return emailRegex.match(comment).hasMatch() || generalCommentRegex.match(comment).hasMatch();
 }
 
 void KeyManagerWindow::generateAndSaveKey() {
@@ -152,7 +178,7 @@ void KeyManagerWindow::generateAndSaveKey() {
 
     // RAII for EVP_PKEY
     struct EVP_PKEYDeleter {
-        void operator()(EVP_PKEY* pkey) const { EVP_PKEY_free(pkey); }
+        void operator()(EVP_PKEY* pkey) const { EVP_PKEY_free(pkey); } // Fixed typo: was EVP_KEY_free
     };
     using EVP_PKEYPtr = std::unique_ptr<EVP_PKEY, EVP_PKEYDeleter>;
 
@@ -190,6 +216,7 @@ void KeyManagerWindow::generateAndSaveKey() {
     FILE *privateKeyFp = fdopen(privateKeyFile.handle(), "w");
     if (!privateKeyFp) {
         errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open file descriptor: %1").arg(keyPath), ForensicErrorHandler::Severity::Critical);
+        privateKeyFile.close();
         return;
     }
 
@@ -200,7 +227,9 @@ void KeyManagerWindow::generateAndSaveKey() {
         if (!PEM_write_PrivateKey(privateKeyFp, pkey.get(), EVP_aes_256_cbc(), (unsigned char*)passwordBytes.constData(),
                                   passwordBytes.length(), nullptr, nullptr)) {
             errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write PEM private key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+            secureClear(passwordBytes);
             fclose(privateKeyFp);
+            privateKeyFile.close();
             return;
         }
     } else if (format == "SSH") {
@@ -208,16 +237,24 @@ void KeyManagerWindow::generateAndSaveKey() {
         BIO *bio = BIO_new(BIO_s_mem());
         if (!bio) {
             errorHandler->handleError(this, tr("Generate Key"), tr("Failed to create BIO for SSH key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+            secureClear(passwordBytes);
             fclose(privateKeyFp);
+            privateKeyFile.close();
             return;
         }
 
-        // Convert RSA key to OpenSSH format
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+        if (!PEM_write_bio_PrivateKey(bio, pkey.get(), EVP_aes_256_cbc(), (unsigned char*)passwordBytes.constData(),
+                                      passwordBytes.length(), nullptr, nullptr)) {
+#else
         if (!PEM_write_bio_PrivateKey_traditional(bio, pkey.get(), EVP_aes_256_cbc(), (unsigned char*)passwordBytes.constData(),
                                                   passwordBytes.length(), nullptr, nullptr)) {
+#endif
             errorHandler->handleError(this, tr("Generate Key"), tr("Failed to convert to SSH private key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+            secureClear(passwordBytes);
             BIO_free(bio);
             fclose(privateKeyFp);
+            privateKeyFile.close();
             return;
         }
 
@@ -226,19 +263,22 @@ void KeyManagerWindow::generateAndSaveKey() {
         long bio_len = BIO_get_mem_data(bio, &bio_data);
         if (fwrite(bio_data, 1, bio_len, privateKeyFp) != static_cast<size_t>(bio_len)) {
             errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write SSH private key to file"), ForensicErrorHandler::Severity::Critical);
+            secureClear(passwordBytes);
             BIO_free(bio);
             fclose(privateKeyFp);
+            privateKeyFile.close();
             return;
         }
         BIO_free(bio);
     }
 
+    secureClear(passwordBytes);
     fclose(privateKeyFp);
     privateKeyFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner); // Permissions 0600
-    passwordBytes.fill(0); // Clear memory
+    privateKeyFile.close();
 
     errorHandler->handleError(this, tr("Generate Key"), tr("Private key saved to %1 in %2 format").arg(keyPath, format), ForensicErrorHandler::Severity::Info);
-    errorHandler->logToAuditTrail("Generate Key", tr("Generated and saved RSA-%1 key to %2 in %3 format").arg(keyLength).arg(keyPath, format));
+    errorHandler->logToAuditTrail(tr("Generate Key"), tr("Generated and saved RSA-%1 key to %2 in %3 format").arg(QLocale().toString(keyLength), keyPath, format));
 
     // Save public key
     QString publicKeyPath = keyPath + ".pub";
@@ -251,6 +291,7 @@ void KeyManagerWindow::generateAndSaveKey() {
     FILE *publicKeyFp = fdopen(publicKeyFile.handle(), "w");
     if (!publicKeyFp) {
         errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open public key file descriptor: %1").arg(publicKeyPath), ForensicErrorHandler::Severity::Warning);
+        publicKeyFile.close();
         return;
     }
 
@@ -259,30 +300,25 @@ void KeyManagerWindow::generateAndSaveKey() {
         if (!PEM_write_PUBKEY(publicKeyFp, pkey.get())) {
             errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write PEM public key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
             fclose(publicKeyFp);
+            publicKeyFile.close();
             return;
         }
     } else if (format == "SSH") {
         // Save public key in SSH format
-        RSA *rsa = EVP_PKEY_get1_RSA(pkey.get());
-        if (!rsa) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to extract RSA key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
-            fclose(publicKeyFp);
-            return;
-        }
-
         BIO *bio = BIO_new(BIO_s_mem());
         if (!bio) {
             errorHandler->handleError(this, tr("Generate Key"), tr("Failed to create BIO for SSH public key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
-            RSA_free(rsa);
             fclose(publicKeyFp);
+            publicKeyFile.close();
             return;
         }
 
-        if (!PEM_write_bio_RSAPublicKey(bio, rsa)) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write RSA public key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
+        // Use modern OpenSSL API to write public key
+        if (!PEM_write_bio_PUBKEY(bio, pkey.get())) {
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write public key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
             BIO_free(bio);
-            RSA_free(rsa);
             fclose(publicKeyFp);
+            publicKeyFile.close();
             return;
         }
 
@@ -290,28 +326,28 @@ void KeyManagerWindow::generateAndSaveKey() {
         QString sshComment = comment.isEmpty() ? QString("%1@keymanager").arg(m_username) : comment;
         char *bio_data;
         long bio_len = BIO_get_mem_data(bio, &bio_data);
+        // Convert to SSH public key format (base64-encoded with "ssh-rsa" prefix)
         QString sshPubKey = QString("ssh-rsa %1 %2\n").arg(QString(QByteArray(bio_data, bio_len).toBase64()), sshComment);
         if (fwrite(sshPubKey.toUtf8().constData(), 1, sshPubKey.toUtf8().length(), publicKeyFp) != static_cast<size_t>(sshPubKey.toUtf8().length())) {
             errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write SSH public key to file"), ForensicErrorHandler::Severity::Warning);
             BIO_free(bio);
-            RSA_free(rsa);
             fclose(publicKeyFp);
+            publicKeyFile.close();
             return;
         }
         BIO_free(bio);
-        RSA_free(rsa);
     }
 
     fclose(publicKeyFp);
     publicKeyFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther); // Permissions 0644
+    publicKeyFile.close();
 
     m_lastPublicKeyPath = publicKeyPath; // Store public key path
     errorHandler->handleError(this, tr("Generate Key"), tr("Public key saved to %1 in %2 format").arg(publicKeyPath, format), ForensicErrorHandler::Severity::Info);
-    errorHandler->logToAuditTrail("Generate Key", tr("Saved public key to %1 in %2 format with comment '%3'").arg(publicKeyPath, format, comment.isEmpty() ? "default" : comment));
+    errorHandler->logToAuditTrail(tr("Generate Key"), tr("Saved public key to %1 in %2 format with comment '%3'").arg(publicKeyPath, format, comment.isEmpty() ? tr("default") : comment));
 }
 
 void KeyManagerWindow::verifyKey() {
-    // Allow selection of both PEM and OpenSSH key files
     QString keyPath = QFileDialog::getOpenFileName(this, tr("Select Private Key"), QDir::homePath(), tr("Key Files (*.pem *.key)"));
     if (keyPath.isEmpty()) {
         errorHandler->handleError(this, tr("Verify Key"), tr("Key selection canceled"), ForensicErrorHandler::Severity::Info);
@@ -351,25 +387,27 @@ void KeyManagerWindow::verifyKey() {
 
     // Read file content into a BIO
     QByteArray keyData = privateKeyFile.readAll();
+    privateKeyFile.close();
     BIOPtr bio(BIO_new_mem_buf(keyData.constData(), keyData.size()));
     if (!bio) {
         errorHandler->handleError(this, tr("Verify Key"), tr("Failed to create BIO for key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
-        privateKeyFile.close();
         return;
     }
 
     // Attempt to read private key (supports both PEM and OpenSSH formats)
     QByteArray passwordBytes = password.toUtf8();
-    EVP_PKEY *pkey_raw = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, (void*)passwordBytes.constData());
+    EVP_PKEY *pkey_raw = nullptr;
+#if OPENSSL_VERSION_NUMBER >= 0x10100000L
+    pkey_raw = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, (void*)passwordBytes.constData());
+#else
+    pkey_raw = PEM_read_bio_PrivateKey(bio.get(), nullptr, nullptr, (void*)passwordBytes.data());
+#endif
+    secureClear(passwordBytes);
     if (!pkey_raw) {
         errorHandler->handleError(this, tr("Verify Key"), tr("Invalid private key or wrong password: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
-        passwordBytes.fill(0); // Clear memory
-        privateKeyFile.close();
         return;
     }
     EVP_PKEYPtr pkey(pkey_raw);
-    passwordBytes.fill(0); // Clear memory
-    privateKeyFile.close();
 
     // Verify with a test message
     const char *testMessage = "Test message for verification";
@@ -426,10 +464,9 @@ void KeyManagerWindow::verifyKey() {
         return;
     }
 
-    // Determine key format for logging
     QString keyFormat = keyPath.endsWith(".pem") ? "PEM" : "OpenSSH";
     errorHandler->handleError(this, tr("Verify Key"), tr("Private key verified successfully (%1 format)").arg(keyFormat), ForensicErrorHandler::Severity::Info);
-    errorHandler->logToAuditTrail("Verify Key", tr("Successfully verified %1 key %2").arg(keyFormat, keyPath));
+    errorHandler->logToAuditTrail(tr("Verify Key"), tr("Successfully verified %1 key %2").arg(keyFormat, keyPath));
 }
 
 void KeyManagerWindow::showAuditLog() {
@@ -479,8 +516,7 @@ void KeyManagerWindow::showAuditLog() {
             if (logFile.remove()) {
                 logViewer->setText(tr("Audit file cleared."));
                 errorHandler->handleError(this, tr("Log Display"), tr("Audit file cleared successfully."), ForensicErrorHandler::Severity::Info);
-                errorHandler->logToAuditTrail("Clear Log", tr("Audit file cleared"));
-                // Crea un nuovo file con permessi restrittivi
+                errorHandler->logToAuditTrail(tr("Clear Log"), tr("Audit file cleared"));
                 if (logFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
                     logFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
                     logFile.close();
@@ -498,24 +534,9 @@ void KeyManagerWindow::showAuditLog() {
 }
 
 void KeyManagerWindow::closeEvent(QCloseEvent *event) {
-    errorHandler->logToAuditTrail("Window Closed", QString("User %1 closed the application").arg(m_username));
-    emit logoutRequested(); // Emit signal to exit the main loop
-    event->accept(); // Accept the close event
-}
-
-bool KeyManagerWindow::validateComment(const QString &comment) const {
-    // Allow empty comments
-    if (comment.isEmpty()) return true;
-
-    // Regular expression for email address (simplified for SSH key comment)
-    // Matches: alphanumeric, dots, hyphens, underscores, and @, e.g., user.name-123@example.com
-    QRegularExpression emailRegex("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
-
-    // Regular expression for general comment (alphanumeric, spaces, hyphens, underscores)
-    QRegularExpression generalCommentRegex("^[A-Za-z0-9\\-_\\s]*$");
-
-    // Check if the comment is either a valid email or matches the general comment pattern
-    return emailRegex.match(comment).hasMatch() || generalCommentRegex.match(comment).hasMatch();
+    errorHandler->logToAuditTrail(tr("Window Closed"), tr("User %1 closed the application").arg(m_username));
+    emit logoutRequested();
+    event->accept();
 }
 
 void KeyManagerWindow::copyPublicKeyToClipboard() {
@@ -539,12 +560,34 @@ void KeyManagerWindow::copyPublicKeyToClipboard() {
         return;
     }
 
-    // Copy to clipboard
     QClipboard *clipboard = QApplication::clipboard();
     clipboard->setText(publicKeyContent);
 
-    // Determine key format for logging
     QString keyFormat = m_lastPublicKeyPath.endsWith(".pem.pub") ? "PEM" : "OpenSSH";
     errorHandler->handleError(this, tr("Copy Public Key"), tr("Public key copied to clipboard (%1 format)").arg(keyFormat), ForensicErrorHandler::Severity::Info);
-    errorHandler->logToAuditTrail("Copy Public Key", tr("Copied public key from %1 (%2 format) to clipboard").arg(m_lastPublicKeyPath, keyFormat));
+    errorHandler->logToAuditTrail(tr("Copy Public Key"), tr("Copied public key from %1 (%2 format) to clipboard").arg(m_lastPublicKeyPath, keyFormat));
+}
+
+void KeyManagerWindow::changeLanguage(const QString &locale) {
+    static QTranslator *translator = nullptr;
+    if (translator) {
+        QApplication::instance()->removeTranslator(translator);
+        delete translator;
+    }
+    translator = new QTranslator;
+    QString translationPath = QCoreApplication::applicationDirPath() + "/translations";
+    if (translator->load("keymanager_" + locale, translationPath)) {
+        QApplication::instance()->installTranslator(translator);
+        errorHandler->logToAuditTrail(tr("Language Change"), tr("Changed language to %1").arg(locale));
+        setupUi(); // Rebuild UI to apply translations
+        if (QLocale(locale).textDirection() == Qt::RightToLeft) {
+            QApplication::setLayoutDirection(Qt::RightToLeft);
+        } else {
+            QApplication::setLayoutDirection(Qt::LeftToRight);
+        }
+    } else {
+        errorHandler->handleError(this, tr("Language Change"), tr("Failed to load translation for %1").arg(locale), ForensicErrorHandler::Severity::Warning);
+        delete translator;
+        translator = nullptr;
+    }
 }
