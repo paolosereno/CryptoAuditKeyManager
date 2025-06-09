@@ -138,13 +138,17 @@ bool Database::createTables() {
 }
 
 bool Database::isValidUsername(const QString &username) const {
-    static const QStringList reservedKeywords = {"SELECT", "DROP", "INSERT", "UPDATE"};
-    if (reservedKeywords.contains(username, Qt::CaseInsensitive)) {
-        m_errorHandler->handleError(nullptr, tr("Database"), tr("Username is a reserved keyword"), ForensicErrorHandler::Severity::Warning);
+    static const QStringList reservedKeywords = {"SELECT", "DROP", "INSERT", "UPDATE", "DELETE"};
+    if (username.isEmpty() || reservedKeywords.contains(username, Qt::CaseInsensitive)) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Invalid or reserved username"), ForensicErrorHandler::Severity::Warning);
         return false;
     }
     QRegularExpression regex("^[a-zA-Z0-9_]{3,50}$");
-    return regex.match(username).hasMatch();
+    if (!regex.match(username).hasMatch()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Username must be 3-50 alphanumeric characters or underscores"), ForensicErrorHandler::Severity::Warning);
+        return false;
+    }
+    return true;
 }
 
 bool Database::registerUser(const QString &username, const QString &password) {
