@@ -4,6 +4,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QRegularExpression>
+#include <QThread>
 #include <openssl/opensslv.h>
 
 // Helper function to securely clear sensitive data
@@ -29,29 +30,34 @@ bool Database::initialize() {
     bool success = createTables();
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to initialize tables"), ForensicErrorHandler::Severity::Critical);
-        closeDatabase();
     }
-    // Keep connection open for lifetime of object
+    closeDatabase();
     return success;
 }
 
 bool Database::openDatabase() {
-    if (m_db.isOpen()) return true; // Reuse existing connection
+    if (m_db.isOpen()) return true;
 
     m_db = QSqlDatabase::addDatabase("QSQLITE", m_connectionName);
     m_db.setDatabaseName(m_dbPath);
-    if (!m_db.open()) {
-        m_errorHandler->handleError(nullptr, tr("Database"), tr("Database error: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
-        return false;
+    int retries = 3;
+    while (retries > 0) {
+        if (m_db.open()) return true;
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        QThread::msleep(100); // Wait before retry
+        retries--;
     }
-    return true;
+    m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database after retries"), ForensicErrorHandler::Severity::Critical);
+    return false;
 }
 
 void Database::closeDatabase() {
     if (m_db.isOpen()) {
         m_db.close();
     }
-    QSqlDatabase::removeDatabase(m_connectionName);
+    if (QSqlDatabase::contains(m_connectionName)) {
+        QSqlDatabase::removeDatabase(m_connectionName);
+    }
 }
 
 bool Database::createTables() {
@@ -60,8 +66,13 @@ bool Database::createTables() {
         return false;
     }
 
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Critical);
+        closeDatabase();
+        return false;
+    }
+
     QSqlQuery query(m_db);
-    // Create users table
     bool success = query.exec(
         "CREATE TABLE IF NOT EXISTS users ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -71,10 +82,11 @@ bool Database::createTables() {
         );
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create users table: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
         return false;
     }
 
-    // Create login_attempts table
     success = query.exec(
         "CREATE TABLE IF NOT EXISTS login_attempts ("
         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -84,6 +96,15 @@ bool Database::createTables() {
         );
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to create login_attempts table: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return false;
+    }
+
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
         return false;
     }
 
@@ -106,8 +127,14 @@ bool Database::registerUser(const QString &username, const QString &password) {
         return false;
     }
 
-    if (!m_db.isOpen() && !openDatabase()) {
+    if (!openDatabase()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database for registration"), ForensicErrorHandler::Severity::Critical);
+        return false;
+    }
+
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Critical);
+        closeDatabase();
         return false;
     }
 
@@ -128,6 +155,8 @@ bool Database::registerUser(const QString &username, const QString &password) {
 #endif
     if (!randSuccess) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to generate random salt"), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
         return false;
     }
 
@@ -140,6 +169,8 @@ bool Database::registerUser(const QString &username, const QString &password) {
     secureClear(passwordBytes); // Securely clear password
     if (result != ARGON2_OK) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Argon2 hashing failed: %1").arg(result), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
         return false;
     }
 
@@ -156,10 +187,20 @@ bool Database::registerUser(const QString &username, const QString &password) {
     bool success = query.exec();
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to register user: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
         return false;
     }
 
-    return success;
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return false;
+    }
+
+    closeDatabase();
+    return true;
 }
 
 bool Database::authenticateUser(const QString &username, const QString &password) {
@@ -168,8 +209,14 @@ bool Database::authenticateUser(const QString &username, const QString &password
         return false;
     }
 
-    if (!m_db.isOpen() && !openDatabase()) {
+    if (!openDatabase()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database for authentication"), ForensicErrorHandler::Severity::Critical);
+        return false;
+    }
+
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Critical);
+        closeDatabase();
         return false;
     }
 
@@ -179,6 +226,8 @@ bool Database::authenticateUser(const QString &username, const QString &password
     query.bindValue(":username", username);
     if (!query.exec() || !query.next()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("User not found or query failed: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        m_db.rollback();
+        closeDatabase();
         return false;
     }
 
@@ -186,6 +235,8 @@ bool Database::authenticateUser(const QString &username, const QString &password
     QStringList parts = storedHash.split('$');
     if (parts.size() != 2) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Invalid stored hash format"), ForensicErrorHandler::Severity::Warning);
+        m_db.rollback();
+        closeDatabase();
         return false;
     }
 
@@ -208,11 +259,22 @@ bool Database::authenticateUser(const QString &username, const QString &password
     secureClear(passwordBytes); // Securely clear password
     if (result != ARGON2_OK) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Argon2 verification failed: %1").arg(result), ForensicErrorHandler::Severity::Warning);
+        m_db.rollback();
+        closeDatabase();
         return false;
     }
 
     // Compare hashes securely
     bool match = (CRYPTO_memcmp(computedHash, expectedHash.constData(), expectedHash.length()) == 0);
+
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return false;
+    }
+
+    closeDatabase();
     return match;
 }
 
@@ -222,21 +284,38 @@ bool Database::isAccountLocked(const QString &username) {
         return true; // Consider locked for invalid input
     }
 
-    if (!m_db.isOpen() && !openDatabase()) {
+    if (!openDatabase()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database for account lock check"), ForensicErrorHandler::Severity::Critical);
         return true; // Consider locked in case of error
+    }
+
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Critical);
+        closeDatabase();
+        return true;
     }
 
     QSqlQuery query(m_db);
     query.prepare("SELECT COUNT(*) FROM login_attempts WHERE username = :username AND success = 0 AND attempt_time > datetime('now', '-5 minutes')");
     query.bindValue(":username", username);
-    if (query.exec() && query.next()) {
+    bool success = query.exec() && query.next();
+    bool locked = false;
+    if (success) {
         int failedAttempts = query.value(0).toInt();
-        return failedAttempts >= 3;
+        locked = failedAttempts >= 3;
+    } else {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check account lock status: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
     }
 
-    m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check account lock status: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
-    return false;
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return true;
+    }
+
+    closeDatabase();
+    return locked;
 }
 
 void Database::logLoginAttempt(const QString &username, bool success) {
@@ -245,8 +324,14 @@ void Database::logLoginAttempt(const QString &username, bool success) {
         return;
     }
 
-    if (!m_db.isOpen() && !openDatabase()) {
+    if (!openDatabase()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database for login attempt logging"), ForensicErrorHandler::Severity::Warning);
+        return;
+    }
+
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Warning);
+        closeDatabase();
         return;
     }
 
@@ -256,24 +341,50 @@ void Database::logLoginAttempt(const QString &username, bool success) {
     query.bindValue(":success", success);
     if (!query.exec()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to log login attempt: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        m_db.rollback();
+        closeDatabase();
+        return;
     }
+
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        m_db.rollback();
+    }
+
+    closeDatabase();
 }
 
 bool Database::hasUsers() {
-    if (!m_db.isOpen() && !openDatabase()) {
+    if (!openDatabase()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database to check for users"), ForensicErrorHandler::Severity::Critical);
+        return false;
+    }
+
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Critical);
+        closeDatabase();
         return false;
     }
 
     QSqlQuery query(m_db);
     bool success = query.exec("SELECT COUNT(*) FROM users");
+    bool hasUsers = false;
     if (success && query.next()) {
         int count = query.value(0).toInt();
-        return count > 0;
+        hasUsers = count > 0;
+    } else {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check for users: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
     }
 
-    m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check for users: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
-    return false;
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return false;
+    }
+
+    closeDatabase();
+    return hasUsers;
 }
 
 bool Database::removeUser(const QString &username) {
@@ -282,8 +393,14 @@ bool Database::removeUser(const QString &username) {
         return false;
     }
 
-    if (!m_db.isOpen() && !openDatabase()) {
+    if (!openDatabase()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database to remove user"), ForensicErrorHandler::Severity::Critical);
+        return false;
+    }
+
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Critical);
+        closeDatabase();
         return false;
     }
 
@@ -293,9 +410,20 @@ bool Database::removeUser(const QString &username) {
     bool success = query.exec();
     if (!success) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to remove user: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
+        m_db.rollback();
+        closeDatabase();
+        return false;
     }
 
-    return success;
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return false;
+    }
+
+    closeDatabase();
+    return true;
 }
 
 bool Database::userExists(const QString &username) {
@@ -304,19 +432,35 @@ bool Database::userExists(const QString &username) {
         return false;
     }
 
-    if (!m_db.isOpen() && !openDatabase()) {
+    if (!openDatabase()) {
         m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to open database to check user existence"), ForensicErrorHandler::Severity::Critical);
+        return false;
+    }
+
+    if (!m_db.transaction()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to start transaction"), ForensicErrorHandler::Severity::Critical);
+        closeDatabase();
         return false;
     }
 
     QSqlQuery query(m_db);
     query.prepare("SELECT COUNT(*) FROM users WHERE username = :username");
     query.bindValue(":username", username);
+    bool exists = false;
     if (query.exec() && query.next()) {
         int count = query.value(0).toInt();
-        return count > 0;
+        exists = count > 0;
+    } else {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check if user exists: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
     }
 
-    m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to check if user exists: %1").arg(query.lastError().text()), ForensicErrorHandler::Severity::Warning);
-    return false;
+    if (!m_db.commit()) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Failed to commit transaction: %1").arg(m_db.lastError().text()), ForensicErrorHandler::Severity::Critical);
+        m_db.rollback();
+        closeDatabase();
+        return false;
+    }
+
+    closeDatabase();
+    return exists;
 }

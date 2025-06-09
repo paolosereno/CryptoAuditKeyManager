@@ -24,15 +24,14 @@ public:
     bool userExists(const QString &username);
 
 private:
-    QString m_dbPath;
-    QSqlDatabase m_db;
-    ForensicErrorHandler *m_errorHandler;
-    QString m_connectionName; // Added for unique connection tracking
-
     bool createTables();
     bool openDatabase();
     void closeDatabase();
-    bool isValidUsername(const QString &username) const; // Added for SQL injection prevention
+    bool isValidUsername(const QString &username) const;
+    QString m_dbPath;
+    QSqlDatabase m_db;
+    ForensicErrorHandler *m_errorHandler;
+    QString m_connectionName;
 };
 
 #endif // DATABASE_H
