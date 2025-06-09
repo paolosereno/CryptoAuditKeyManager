@@ -91,6 +91,11 @@ bool Database::createTables() {
 }
 
 bool Database::isValidUsername(const QString &username) const {
+    static const QStringList reservedKeywords = {"SELECT", "DROP", "INSERT", "UPDATE"};
+    if (reservedKeywords.contains(username, Qt::CaseInsensitive)) {
+        m_errorHandler->handleError(nullptr, tr("Database"), tr("Username is a reserved keyword"), ForensicErrorHandler::Severity::Warning);
+        return false;
+    }
     QRegularExpression regex("^[a-zA-Z0-9_]{3,50}$");
     return regex.match(username).hasMatch();
 }
