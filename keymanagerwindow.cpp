@@ -123,9 +123,22 @@ void KeyManagerWindow::handleLogout() {
     close();
 }
 
+// bool KeyManagerWindow::validatePassword(const QString &password) const {
+//     return password.length() >= 8 && password.contains(QRegularExpression("[A-Za-z0-9!@#$%^&*_]+"));
+// }
+
+
 bool KeyManagerWindow::validatePassword(const QString &password) const {
-    return password.length() >= 8 && password.contains(QRegularExpression("[A-Za-z0-9!@#$%^&*_]+"));
+    QRegularExpression regex("^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[!@#$%^&*])[A-Za-z\\d!@#$%^&*]{12,}$");
+    bool isValid = regex.match(password).hasMatch();
+    if (!isValid) {
+        errorHandler->handleError(this, tr("Password Validation"),
+                                  tr("Password must be at least 12 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character (!@#$%^&*)."),
+                                  ForensicErrorHandler::Severity::Warning);
+    }
+    return isValid;
 }
+
 
 bool KeyManagerWindow::validateKeyLength(int keyLength) const {
     return keyLength == 1024 || keyLength == 2048 || keyLength == 4096;
@@ -142,7 +155,9 @@ bool KeyManagerWindow::validateComment(const QString &comment) const {
 void KeyManagerWindow::generateAndSaveKey() {
     QString password = passwordEdit->text();
     if (!validatePassword(password)) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Password must be at least 8 characters and include alphanumeric or special characters"), ForensicErrorHandler::Severity::Warning);
+        errorHandler->handleError(this, tr("Generate Key"),
+                                  tr("Password must be at least 12 characters long and include at least one uppercase letter, one lowercase letter, one number, and one special character (!@#$%^&*)."),
+                                  ForensicErrorHandler::Severity::Warning);
         return;
     }
 

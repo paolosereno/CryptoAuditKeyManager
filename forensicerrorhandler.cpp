@@ -40,7 +40,7 @@ ForensicErrorHandler::ForensicErrorHandler(const QString &auditFilePath, const Q
     }
 }
 
-void ForensicErrorHandler::handleError(QWidget *parent, const QString &context, const QString &message, Severity severity, bool showDialog) {
+void ForensicErrorHandler::handleError(const QWidget *parent, const QString &context, const QString &message, Severity severity, bool showDialog) {
     QString fullMessage = QString("%1: %2").arg(context, message);
     logToAuditTrail(context, fullMessage);
 
@@ -62,7 +62,7 @@ void ForensicErrorHandler::handleError(QWidget *parent, const QString &context, 
             break;
         }
 
-        QMessageBox msgBox(icon, dialogTitle, fullMessage, QMessageBox::Ok, parent);
+        QMessageBox msgBox(icon, dialogTitle, fullMessage, QMessageBox::Ok, const_cast<QWidget*>(parent));
         msgBox.setTextFormat(Qt::PlainText);
         msgBox.exec();
     }

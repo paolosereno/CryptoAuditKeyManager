@@ -1,3 +1,4 @@
+// --- File: forensicerrorhandler.h ---
 #ifndef FORENSICERRORHANDLER_H
 #define FORENSICERRORHANDLER_H
 
@@ -11,7 +12,7 @@ public:
     enum class Severity { Info, Warning, Critical };
 
     explicit ForensicErrorHandler(const QString &auditFilePath, const QString &username, QObject *parent = nullptr);
-    void handleError(QWidget *parent, const QString &context, const QString &message, Severity severity = Severity::Warning, bool showDialog = true);
+    void handleError(const QWidget *parent, const QString &context, const QString &message, Severity severity = Severity::Warning, bool showDialog = true);
     QString getAuditFilePath() const { return m_auditFilePath; }
     void logToAuditTrail(const QString &action, const QString &details);
 
