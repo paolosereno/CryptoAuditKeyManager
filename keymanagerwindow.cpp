@@ -53,6 +53,16 @@ void KeyManagerWindow::setupUi() {
     passwordLayout->addWidget(passwordEdit);
     mainLayout->addLayout(passwordLayout);
 
+    // Key type selection
+    QHBoxLayout *keyTypeLayout = new QHBoxLayout();
+    QLabel *keyTypeLabel = new QLabel(tr("Key Type:"));
+    keyTypeCombo = new QComboBox();
+    keyTypeCombo->addItems({"RSA", "ECDSA", "Ed25519"});
+    keyTypeCombo->setCurrentText("RSA");
+    keyTypeLayout->addWidget(keyTypeLabel);
+    keyTypeLayout->addWidget(keyTypeCombo);
+    mainLayout->addLayout(keyTypeLayout);
+
     // Key length selection
     QHBoxLayout *keyLengthLayout = new QHBoxLayout();
     QLabel *keyLengthLabel = new QLabel(tr("Key Length:"));
@@ -67,7 +77,7 @@ void KeyManagerWindow::setupUi() {
     QHBoxLayout *keyFormatLayout = new QHBoxLayout();
     QLabel *keyFormatLabel = new QLabel(tr("Key Format:"));
     keyFormatCombo = new QComboBox();
-    keyFormatCombo->addItems({"PEM", "SSH"});
+    keyFormatCombo->addItems({"PEM", "SSH", "DER", "PKCS#8"});
     keyFormatCombo->setCurrentText("PEM");
     keyFormatLayout->addWidget(keyFormatLabel);
     keyFormatLayout->addWidget(keyFormatCombo);
@@ -99,7 +109,7 @@ void KeyManagerWindow::setupUi() {
     logoutButton = new QPushButton(tr("Logout"));
     copyPublicKeyButton = new QPushButton(tr("Copy Public Key to Clipboard"));
     mainLayout->addWidget(generateButton);
-    mainLayout->addWidget(verifyButton); // Fixed typo: was passwordButton
+    mainLayout->addWidget(verifyButton);
     mainLayout->addWidget(showLogButton);
     mainLayout->addWidget(logoutButton);
     mainLayout->addWidget(copyPublicKeyButton);
@@ -110,11 +120,24 @@ void KeyManagerWindow::setupUi() {
     connect(verifyButton, &QPushButton::clicked, this, &KeyManagerWindow::verifyKey);
     connect(showLogButton, &QPushButton::clicked, this, &KeyManagerWindow::showAuditLog);
     connect(logoutButton, &QPushButton::clicked, this, &KeyManagerWindow::handleLogout);
-    connect(copyPublicKeyButton, &QPushButton::clicked, this, &KeyManagerWindow::copyPublicKeyToClipboard); // Fixed syntax
-    connect(languageCombo, &QComboBox::currentTextChanged, this, &KeyManagerWindow::changeLanguage); // Fixed syntax
+    connect(copyPublicKeyButton, &QPushButton::clicked, this, &KeyManagerWindow::copyPublicKeyToClipboard);
+    connect(languageCombo, &QComboBox::currentTextChanged, this, &KeyManagerWindow::changeLanguage);
+    connect(keyTypeCombo, &QComboBox::currentTextChanged, this, [=](const QString &keyType) {
+        keyLengthCombo->clear();
+        if (keyType == "RSA") {
+            keyLengthCombo->addItems({"1024", "2048", "4096"});
+            keyLengthCombo->setCurrentText("2048");
+        } else if (keyType == "ECDSA") {
+            keyLengthCombo->addItems({"256", "384", "521"});
+            keyLengthCombo->setCurrentText("256");
+        } else if (keyType == "Ed25519") {
+            keyLengthCombo->addItems({"256"});
+            keyLengthCombo->setCurrentText("256");
+        }
+    });
 
     setWindowTitle(tr("Forensic Key Manager"));
-    resize(400, 320); // Slightly increased height for language combo
+    resize(400, 360);
 }
 
 void KeyManagerWindow::handleLogout() {
@@ -122,11 +145,6 @@ void KeyManagerWindow::handleLogout() {
     emit logoutRequested();
     close();
 }
-
-// bool KeyManagerWindow::validatePassword(const QString &password) const {
-//     return password.length() >= 8 && password.contains(QRegularExpression("[A-Za-z0-9!@#$%^&*_]+"));
-// }
-
 
 bool KeyManagerWindow::validatePassword(const QString &password) const {
     QRegularExpression regex("^(?=.*[A-Z])(?=.*[a-z])(?=.*\\d)(?=.*[!@#$%^&*])[A-Za-z\\d!@#$%^&*]{12,}$");
@@ -139,9 +157,15 @@ bool KeyManagerWindow::validatePassword(const QString &password) const {
     return isValid;
 }
 
-
-bool KeyManagerWindow::validateKeyLength(int keyLength) const {
-    return keyLength == 1024 || keyLength == 2048 || keyLength == 4096;
+bool KeyManagerWindow::validateKeyLength(int keyLength, const QString &keyType) const {
+    if (keyType == "RSA") {
+        return keyLength == 1024 || keyLength == 2048 || keyLength == 4096;
+    } else if (keyType == "ECDSA") {
+        return keyLength == 256 || keyLength == 384 || keyLength == 521;
+    } else if (keyType == "Ed25519") {
+        return keyLength == 256;
+    }
+    return false;
 }
 
 bool KeyManagerWindow::validateComment(const QString &comment) const {
@@ -153,6 +177,7 @@ bool KeyManagerWindow::validateComment(const QString &comment) const {
 }
 
 void KeyManagerWindow::generateAndSaveKey() {
+    // Validazione della password
     QString password = passwordEdit->text();
     if (!validatePassword(password)) {
         errorHandler->handleError(this, tr("Generate Key"),
@@ -161,9 +186,26 @@ void KeyManagerWindow::generateAndSaveKey() {
         return;
     }
 
+    // Selezione del formato e del percorso del file
     QString format = keyFormatCombo->currentText();
-    QString fileFilter = format == "PEM" ? tr("PEM Files (*.pem)") : tr("SSH Key Files (*.key)");
-    QString defaultExt = format == "PEM" ? ".pem" : ".key";
+    QString fileFilter, defaultExt;
+    if (format == "PEM") {
+        fileFilter = tr("PEM Files (*.pem)");
+        defaultExt = ".pem";
+    } else if (format == "SSH") {
+        fileFilter = tr("SSH Key Files (*.key)");
+        defaultExt = ".key";
+    } else if (format == "DER") {
+        fileFilter = tr("DER Files (*.der)");
+        defaultExt = ".der";
+    } else if (format == "PKCS#8") {
+        fileFilter = tr("PKCS#8 Files (*.p8)");
+        defaultExt = ".p8";
+    } else {
+        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid key format"), ForensicErrorHandler::Severity::Warning);
+        return;
+    }
+
     QString keyPath = QFileDialog::getSaveFileName(this, tr("Save Private Key"), QDir::homePath(), fileFilter);
     if (keyPath.isEmpty()) {
         errorHandler->handleError(this, tr("Generate Key"), tr("Key save canceled"), ForensicErrorHandler::Severity::Info);
@@ -173,85 +215,147 @@ void KeyManagerWindow::generateAndSaveKey() {
         keyPath += defaultExt;
     }
 
+    // Validazione del commento (usato solo per SSH)
     QString comment = commentEdit->text().trimmed();
-    if (!validateComment(comment)) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid comment: must be alphanumeric, spaces, hyphens, underscores, or a valid email address"), ForensicErrorHandler::Severity::Warning);
+    if (format == "SSH" && !validateComment(comment)) {
+        errorHandler->handleError(this, tr("Generate Key"),
+                                  tr("Invalid comment: must be alphanumeric, spaces, hyphens, underscores, or a valid email address"),
+                                  ForensicErrorHandler::Severity::Warning);
         return;
     }
 
+    // Validazione del tipo di chiave
+    QString keyType = keyTypeCombo->currentText();
+    if (!validateKeyType(keyType)) {
+        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid key type"), ForensicErrorHandler::Severity::Warning);
+        return;
+    }
+
+    // Validazione della lunghezza della chiave
     int keyLength = keyLengthCombo->currentText().toInt();
-    if (!validateKeyLength(keyLength)) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid key length"), ForensicErrorHandler::Severity::Warning);
+    if (!validateKeyLength(keyLength, keyType)) {
+        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid key length for %1").arg(keyType),
+                                  ForensicErrorHandler::Severity::Warning);
         return;
     }
 
-    // RAII for EVP_PKEY_CTX
+    // RAII per EVP_PKEY_CTX
     struct EVP_PKEY_CTXDeleter {
         void operator()(EVP_PKEY_CTX* ctx) const { EVP_PKEY_CTX_free(ctx); }
     };
     using EVP_PKEY_CTXPtr = std::unique_ptr<EVP_PKEY_CTX, EVP_PKEY_CTXDeleter>;
 
-    // RAII for EVP_PKEY
+    // RAII per EVP_PKEY
     struct EVP_PKEYDeleter {
-        void operator()(EVP_PKEY* pkey) const { EVP_PKEY_free(pkey); } // Fixed typo: was EVP_KEY_free
+        void operator()(EVP_PKEY* pkey) const { EVP_PKEY_free(pkey); }
     };
     using EVP_PKEYPtr = std::unique_ptr<EVP_PKEY, EVP_PKEYDeleter>;
 
-    // Generate RSA key with EVP
-    EVP_PKEY_CTXPtr ctx(EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr));
+    // RAII per BIO
+    struct BIODeleter {
+        void operator()(BIO* bio) const { BIO_free(bio); }
+    };
+    using BIOPtr = std::unique_ptr<BIO, BIODeleter>;
+
+    // Generazione della chiave
+    EVP_PKEY_CTXPtr ctx(nullptr);
+    if (keyType == "RSA") {
+        ctx.reset(EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr));
+    } else if (keyType == "ECDSA") {
+        ctx.reset(EVP_PKEY_CTX_new_id(EVP_PKEY_EC, nullptr));
+    } else if (keyType == "Ed25519") {
+        ctx.reset(EVP_PKEY_CTX_new_id(EVP_PKEY_ED25519, nullptr));
+    }
+
     if (!ctx) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to create EVP context: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+        char err_buf[256];
+        ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to create EVP context: %1").arg(err_buf),
+                                  ForensicErrorHandler::Severity::Critical);
         return;
     }
 
     if (EVP_PKEY_keygen_init(ctx.get()) <= 0) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to initialize keygen: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+        char err_buf[256];
+        ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to initialize keygen: %1").arg(err_buf),
+                                  ForensicErrorHandler::Severity::Critical);
         return;
     }
 
-    if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx.get(), keyLength) <= 0) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to set key length: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
-        return;
-    }
+    if (keyType == "RSA") {
+        if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx.get(), keyLength) <= 0) {
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to set RSA key length: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Critical);
+            return;
+        }
+    } else if (keyType == "ECDSA") {
+        int curve_nid;
+        if (keyLength == 256) curve_nid = NID_X9_62_prime256v1;
+        else if (keyLength == 384) curve_nid = NID_secp384r1;
+        else if (keyLength == 521) curve_nid = NID_secp521r1;
+        else {
+            errorHandler->handleError(this, tr("Generate Key"), tr("Unsupported ECDSA curve"), ForensicErrorHandler::Severity::Critical);
+            return;
+        }
+        if (EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx.get(), curve_nid) <= 0) {
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to set ECDSA curve: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Critical);
+            return;
+        }
+    } // Ed25519 non richiede parametri aggiuntivi
 
-    EVP_PKEY *pkey_raw = nullptr;
+    EVP_PKEY* pkey_raw = nullptr;
     if (EVP_PKEY_keygen(ctx.get(), &pkey_raw) <= 0) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to generate RSA key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+        char err_buf[256];
+        ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to generate %1 key: %2").arg(keyType, err_buf),
+                                  ForensicErrorHandler::Severity::Critical);
         return;
     }
     EVP_PKEYPtr pkey(pkey_raw);
 
-    // Open private key file
+    // Apertura del file per la chiave privata
     QFile privateKeyFile(keyPath);
     if (!privateKeyFile.open(QIODevice::WriteOnly)) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open file: %1").arg(keyPath), ForensicErrorHandler::Severity::Critical);
+        errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open file: %1").arg(keyPath),
+                                  ForensicErrorHandler::Severity::Critical);
         return;
     }
 
-    FILE *privateKeyFp = fdopen(privateKeyFile.handle(), "w");
+    FILE* privateKeyFp = fdopen(privateKeyFile.handle(), "wb"); // Nota: "wb" per DER (binario)
     if (!privateKeyFp) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open file descriptor: %1").arg(keyPath), ForensicErrorHandler::Severity::Critical);
+        errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open file descriptor: %1").arg(keyPath),
+                                  ForensicErrorHandler::Severity::Critical);
         privateKeyFile.close();
         return;
     }
 
-    // Save private key based on selected format
+    // Scrittura della chiave privata
     QByteArray passwordBytes = password.toUtf8();
     if (format == "PEM") {
-        // Save as PEM
-        if (!PEM_write_PrivateKey(privateKeyFp, pkey.get(), EVP_aes_256_cbc(), (unsigned char*)passwordBytes.constData(),
-                                  passwordBytes.length(), nullptr, nullptr)) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write PEM private key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+        if (!PEM_write_PrivateKey(privateKeyFp, pkey.get(), EVP_aes_256_cbc(),
+                                  (unsigned char*)passwordBytes.constData(), passwordBytes.length(), nullptr, nullptr)) {
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write PEM private key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Critical);
             secureClear(passwordBytes);
             fclose(privateKeyFp);
             privateKeyFile.close();
             return;
         }
     } else if (format == "SSH") {
-        // Save as SSH (OpenSSH format)
-        BIO *bio = BIO_new(BIO_s_mem());
+        BIOPtr bio(BIO_new(BIO_s_mem()));
         if (!bio) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to create BIO for SSH key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to create BIO for SSH key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Critical);
             secureClear(passwordBytes);
             fclose(privateKeyFp);
             privateKeyFile.close();
@@ -259,107 +363,165 @@ void KeyManagerWindow::generateAndSaveKey() {
         }
 
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
-        if (!PEM_write_bio_PrivateKey(bio, pkey.get(), EVP_aes_256_cbc(), (unsigned char*)passwordBytes.constData(),
-                                      passwordBytes.length(), nullptr, nullptr)) {
+        if (!PEM_write_bio_PrivateKey(bio.get(), pkey.get(), EVP_aes_256_cbc(),
+                                      (unsigned char*)passwordBytes.constData(), passwordBytes.length(), nullptr, nullptr)) {
 #else
-        if (!PEM_write_bio_PrivateKey_traditional(bio, pkey.get(), EVP_aes_256_cbc(), (unsigned char*)passwordBytes.constData(),
-                                                  passwordBytes.length(), nullptr, nullptr)) {
+        if (!PEM_write_bio_PrivateKey_traditional(bio.get(), pkey.get(), EVP_aes_256_cbc(),
+                                                  (unsigned char*)passwordBytes.constData(), passwordBytes.length(), nullptr, nullptr)) {
 #endif
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to convert to SSH private key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Critical);
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to convert to SSH private key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Critical);
             secureClear(passwordBytes);
-            BIO_free(bio);
             fclose(privateKeyFp);
             privateKeyFile.close();
             return;
         }
 
-        // Write BIO content to file
-        char *bio_data;
-        long bio_len = BIO_get_mem_data(bio, &bio_data);
+        char* bio_data;
+        long bio_len = BIO_get_mem_data(bio.get(), &bio_data);
         if (fwrite(bio_data, 1, bio_len, privateKeyFp) != static_cast<size_t>(bio_len)) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write SSH private key to file"), ForensicErrorHandler::Severity::Critical);
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write SSH private key to file"),
+                                      ForensicErrorHandler::Severity::Critical);
             secureClear(passwordBytes);
-            BIO_free(bio);
             fclose(privateKeyFp);
             privateKeyFile.close();
             return;
         }
-        BIO_free(bio);
+    } else if (format == "DER") {
+        if (i2d_PrivateKey_fp(privateKeyFp, pkey.get()) <= 0) {
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write DER private key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Critical);
+            secureClear(passwordBytes);
+            fclose(privateKeyFp);
+            privateKeyFile.close();
+            return;
+        }
+    } else if (format == "PKCS#8") {
+        if (!PEM_write_PKCS8PrivateKey(privateKeyFp, pkey.get(), EVP_aes_256_cbc(),
+                                       (char*)passwordBytes.constData(), passwordBytes.length(), nullptr, nullptr)) {
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write PKCS#8 private key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Critical);
+            secureClear(passwordBytes);
+            fclose(privateKeyFp);
+            privateKeyFile.close();
+            return;
+        }
     }
 
     secureClear(passwordBytes);
     fclose(privateKeyFp);
-    privateKeyFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner); // Permissions 0600
+    if (!privateKeyFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner)) {
+        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to set permissions for %1").arg(keyPath),
+                                  ForensicErrorHandler::Severity::Warning);
+    }
     privateKeyFile.close();
 
-    errorHandler->handleError(this, tr("Generate Key"), tr("Private key saved to %1 in %2 format").arg(keyPath, format), ForensicErrorHandler::Severity::Info);
-    errorHandler->logToAuditTrail(tr("Generate Key"), tr("Generated and saved RSA-%1 key to %2 in %3 format").arg(QLocale().toString(keyLength), keyPath, format));
+    errorHandler->handleError(this, tr("Generate Key"), tr("Private key saved to %1 in %2 format").arg(keyPath, format),
+                              ForensicErrorHandler::Severity::Info);
+    errorHandler->logToAuditTrail(tr("Generate Key"),
+                                  tr("Generated and saved %1-%2 key to %3 in %4 format").arg(keyType, QLocale().toString(keyLength), keyPath, format));
 
-    // Save public key
+    // Scrittura della chiave pubblica
     QString publicKeyPath = keyPath + ".pub";
     QFile publicKeyFile(publicKeyPath);
     if (!publicKeyFile.open(QIODevice::WriteOnly)) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open public key file: %1").arg(publicKeyPath), ForensicErrorHandler::Severity::Warning);
+        errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open public key file: %1").arg(publicKeyPath),
+                                  ForensicErrorHandler::Severity::Warning);
         return;
     }
 
-    FILE *publicKeyFp = fdopen(publicKeyFile.handle(), "w");
+    FILE* publicKeyFp = fdopen(publicKeyFile.handle(), "wb"); // Nota: "wb" per DER
     if (!publicKeyFp) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open public key file descriptor: %1").arg(publicKeyPath), ForensicErrorHandler::Severity::Warning);
+        errorHandler->handleError(this, tr("Generate Key"), tr("Unable to open public key file descriptor: %1").arg(publicKeyPath),
+                                  ForensicErrorHandler::Severity::Warning);
         publicKeyFile.close();
         return;
     }
 
     if (format == "PEM") {
-        // Save public key as PEM
         if (!PEM_write_PUBKEY(publicKeyFp, pkey.get())) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write PEM public key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write PEM public key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Warning);
             fclose(publicKeyFp);
             publicKeyFile.close();
             return;
         }
     } else if (format == "SSH") {
-        // Save public key in SSH format
-        BIO *bio = BIO_new(BIO_s_mem());
+        BIOPtr bio(BIO_new(BIO_s_mem()));
         if (!bio) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to create BIO for SSH public key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to create BIO for SSH public key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Warning);
             fclose(publicKeyFp);
             publicKeyFile.close();
             return;
         }
 
-        // Use modern OpenSSL API to write public key
-        if (!PEM_write_bio_PUBKEY(bio, pkey.get())) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write public key: %1").arg(ERR_error_string(ERR_get_error(), nullptr)), ForensicErrorHandler::Severity::Warning);
-            BIO_free(bio);
+        if (!PEM_write_bio_PUBKEY(bio.get(), pkey.get())) {
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write public key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Warning);
             fclose(publicKeyFp);
             publicKeyFile.close();
             return;
         }
 
-        // Use user-provided comment or default to username@keymanager
         QString sshComment = comment.isEmpty() ? QString("%1@keymanager").arg(m_username) : comment;
-        char *bio_data;
-        long bio_len = BIO_get_mem_data(bio, &bio_data);
-        // Convert to SSH public key format (base64-encoded with "ssh-rsa" prefix)
-        QString sshPubKey = QString("ssh-rsa %1 %2\n").arg(QString(QByteArray(bio_data, bio_len).toBase64()), sshComment);
+        char* bio_data;
+        long bio_len = BIO_get_mem_data(bio.get(), &bio_data);
+        QString sshPubKeyPrefix = keyType == "RSA" ? "ssh-rsa" : keyType == "ECDSA" ? "ecdsa-sha2-nistp" + QString::number(keyLength) : "ssh-ed25519";
+        QString sshPubKey = QString("%1 %2 %3\n").arg(sshPubKeyPrefix, QString(QByteArray(bio_data, bio_len).toBase64()), sshComment);
         if (fwrite(sshPubKey.toUtf8().constData(), 1, sshPubKey.toUtf8().length(), publicKeyFp) != static_cast<size_t>(sshPubKey.toUtf8().length())) {
-            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write SSH public key to file"), ForensicErrorHandler::Severity::Warning);
-            BIO_free(bio);
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write SSH public key to file"),
+                                      ForensicErrorHandler::Severity::Warning);
             fclose(publicKeyFp);
             publicKeyFile.close();
             return;
         }
-        BIO_free(bio);
+    } else if (format == "DER") {
+        if (i2d_PUBKEY_fp(publicKeyFp, pkey.get()) <= 0) {
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write DER public key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Warning);
+            fclose(publicKeyFp);
+            publicKeyFile.close();
+            return;
+        }
+    } else if (format == "PKCS#8") {
+        if (!PEM_write_PUBKEY(publicKeyFp, pkey.get())) {
+            char err_buf[256];
+            ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
+            errorHandler->handleError(this, tr("Generate Key"), tr("Failed to write PKCS#8 public key: %1").arg(err_buf),
+                                      ForensicErrorHandler::Severity::Warning);
+            fclose(publicKeyFp);
+            publicKeyFile.close();
+            return;
+        }
     }
 
     fclose(publicKeyFp);
-    publicKeyFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther); // Permissions 0644
+    if (!publicKeyFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ReadGroup | QFile::ReadOther)) {
+        errorHandler->handleError(this, tr("Generate Key"), tr("Failed to set permissions for %1").arg(publicKeyPath),
+                                  ForensicErrorHandler::Severity::Warning);
+    }
     publicKeyFile.close();
 
-    m_lastPublicKeyPath = publicKeyPath; // Store public key path
-    errorHandler->handleError(this, tr("Generate Key"), tr("Public key saved to %1 in %2 format").arg(publicKeyPath, format), ForensicErrorHandler::Severity::Info);
-    errorHandler->logToAuditTrail(tr("Generate Key"), tr("Saved public key to %1 in %2 format with comment '%3'").arg(publicKeyPath, format, comment.isEmpty() ? tr("default") : comment));
+    m_lastPublicKeyPath = publicKeyPath;
+    errorHandler->handleError(this, tr("Generate Key"), tr("Public key saved to %1 in %2 format").arg(publicKeyPath, format),
+                              ForensicErrorHandler::Severity::Info);
+    errorHandler->logToAuditTrail(tr("Generate Key"),
+                                  tr("Saved public key to %1 in %2 format with comment '%3'").arg(publicKeyPath, format, comment.isEmpty() ? tr("default") : comment));
 }
 
 void KeyManagerWindow::verifyKey() {
@@ -605,4 +767,8 @@ void KeyManagerWindow::changeLanguage(const QString &locale) {
         delete translator;
         translator = nullptr;
     }
+}
+
+bool KeyManagerWindow::validateKeyType(const QString &keyType) const {
+    return keyType == "RSA" || keyType == "ECDSA" || keyType == "Ed25519";
 }

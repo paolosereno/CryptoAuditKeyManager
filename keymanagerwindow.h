@@ -17,7 +17,7 @@ public:
     ~KeyManagerWindow();
 
 signals:
-    void logoutRequested(); // Signal for logout
+    void logoutRequested();
 
 private slots:
     void generateAndSaveKey();
@@ -25,7 +25,7 @@ private slots:
     void showAuditLog();
     void handleLogout();
     void copyPublicKeyToClipboard();
-    void changeLanguage(const QString &locale); // New: Slot for language switching
+    void changeLanguage(const QString &locale);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
@@ -37,7 +37,8 @@ private:
     QLineEdit *commentEdit;
     QComboBox *keyLengthCombo;
     QComboBox *keyFormatCombo;
-    QComboBox *languageCombo; // New: Combo box for language selection
+    QComboBox *languageCombo;
+    QComboBox *keyTypeCombo;
     QPushButton *generateButton;
     QPushButton *verifyButton;
     QPushButton *showLogButton;
@@ -47,8 +48,9 @@ private:
 
     void setupUi();
     bool validatePassword(const QString &password) const;
-    bool validateKeyLength(int keyLength) const;
+    bool validateKeyLength(int keyLength, const QString &keyType) const;
     bool validateComment(const QString &comment) const;
+    bool validateKeyType(const QString &keyType) const;
 };
 
 #endif // KEYMANAGERWINDOW_H
