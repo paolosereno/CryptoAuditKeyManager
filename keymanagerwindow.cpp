@@ -36,6 +36,7 @@ KeyManagerWindow::KeyManagerWindow(const QString &auditFilePath, const QString &
 }
 
 KeyManagerWindow::~KeyManagerWindow() {
+    disconnect();
     delete errorHandler;
 }
 
