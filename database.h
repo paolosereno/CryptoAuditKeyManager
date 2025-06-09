@@ -29,6 +29,7 @@ private:
     bool openDatabase();
     void closeDatabase();
     bool isValidUsername(const QString &username) const;
+    bool validatePassword(const QString &password) const; // Aggiunta dichiarazione
     QString m_dbPath;
     QSqlDatabase m_db;
     ForensicErrorHandler *m_errorHandler;
