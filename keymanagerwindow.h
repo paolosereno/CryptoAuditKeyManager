@@ -51,6 +51,7 @@ private:
     bool validateKeyLength(int keyLength, const QString &keyType) const;
     bool validateComment(const QString &comment) const;
     bool validateKeyType(const QString &keyType) const;
+    bool isKeyTypeSupportedForFormat(const QString &keyType, const QString &format) const; // Nuova funzione per validazione formato
 };
 
 #endif // KEYMANAGERWINDOW_H

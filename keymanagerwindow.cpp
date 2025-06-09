@@ -124,16 +124,21 @@ void KeyManagerWindow::setupUi() {
     connect(languageCombo, &QComboBox::currentTextChanged, this, &KeyManagerWindow::changeLanguage);
     connect(keyTypeCombo, &QComboBox::currentTextChanged, this, [=](const QString &keyType) {
         keyLengthCombo->clear();
+        keyFormatCombo->clear();
         if (keyType == "RSA") {
             keyLengthCombo->addItems({"1024", "2048", "4096"});
             keyLengthCombo->setCurrentText("2048");
+            keyFormatCombo->addItems({"PEM", "SSH", "DER", "PKCS#8"});
         } else if (keyType == "ECDSA") {
             keyLengthCombo->addItems({"256", "384", "521"});
             keyLengthCombo->setCurrentText("256");
+            keyFormatCombo->addItems({"PEM", "SSH", "DER", "PKCS#8"});
         } else if (keyType == "Ed25519") {
             keyLengthCombo->addItems({"256"});
             keyLengthCombo->setCurrentText("256");
+            keyFormatCombo->addItems({"PEM", "SSH"}); // DER e PKCS#8 non supportati per Ed25519
         }
+        keyFormatCombo->setCurrentText("PEM");
     });
 
     setWindowTitle(tr("Forensic Key Manager"));
@@ -176,6 +181,19 @@ bool KeyManagerWindow::validateComment(const QString &comment) const {
     return emailRegex.match(comment).hasMatch() || generalCommentRegex.match(comment).hasMatch();
 }
 
+bool KeyManagerWindow::validateKeyType(const QString &keyType) const {
+    return keyType == "RSA" || keyType == "ECDSA" || keyType == "Ed25519";
+}
+
+bool KeyManagerWindow::isKeyTypeSupportedForFormat(const QString &keyType, const QString &format) const {
+    if (format == "PEM" || format == "SSH") {
+        return true; // PEM e SSH supportano tutti i tipi di chiave
+    } else if (format == "DER" || format == "PKCS#8") {
+        return keyType == "RSA" || keyType == "ECDSA"; // DER e PKCS#8 supportano solo RSA e ECDSA
+    }
+    return false;
+}
+
 void KeyManagerWindow::generateAndSaveKey() {
     // Validazione della password
     QString password = passwordEdit->text();
@@ -186,8 +204,30 @@ void KeyManagerWindow::generateAndSaveKey() {
         return;
     }
 
-    // Selezione del formato e del percorso del file
+    // Validazione del tipo di chiave
+    QString keyType = keyTypeCombo->currentText();
+    if (!validateKeyType(keyType)) {
+        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid key type"), ForensicErrorHandler::Severity::Warning);
+        return;
+    }
+
+    // Validazione della lunghezza della chiave
+    int keyLength = keyLengthCombo->currentText().toInt();
+    if (!validateKeyLength(keyLength, keyType)) {
+        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid key length for %1").arg(keyType),
+                                  ForensicErrorHandler::Severity::Warning);
+        return;
+    }
+
+    // Selezione del formato e validazione
     QString format = keyFormatCombo->currentText();
+    if (!isKeyTypeSupportedForFormat(keyType, format)) {
+        errorHandler->handleError(this, tr("Generate Key"),
+                                  tr("Format %1 is not supported for key type %2").arg(format, keyType),
+                                  ForensicErrorHandler::Severity::Warning);
+        return;
+    }
+
     QString fileFilter, defaultExt;
     if (format == "PEM") {
         fileFilter = tr("PEM Files (*.pem)");
@@ -220,21 +260,6 @@ void KeyManagerWindow::generateAndSaveKey() {
     if (format == "SSH" && !validateComment(comment)) {
         errorHandler->handleError(this, tr("Generate Key"),
                                   tr("Invalid comment: must be alphanumeric, spaces, hyphens, underscores, or a valid email address"),
-                                  ForensicErrorHandler::Severity::Warning);
-        return;
-    }
-
-    // Validazione del tipo di chiave
-    QString keyType = keyTypeCombo->currentText();
-    if (!validateKeyType(keyType)) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid key type"), ForensicErrorHandler::Severity::Warning);
-        return;
-    }
-
-    // Validazione della lunghezza della chiave
-    int keyLength = keyLengthCombo->currentText().toInt();
-    if (!validateKeyLength(keyLength, keyType)) {
-        errorHandler->handleError(this, tr("Generate Key"), tr("Invalid key length for %1").arg(keyType),
                                   ForensicErrorHandler::Severity::Warning);
         return;
     }
@@ -489,6 +514,14 @@ void KeyManagerWindow::generateAndSaveKey() {
             return;
         }
     } else if (format == "DER") {
+        if (keyType == "Ed25519") {
+            errorHandler->handleError(this, tr("Generate Key"),
+                                      tr("DER format is not supported for Ed25519 public keys"),
+                                      ForensicErrorHandler::Severity::Warning);
+            fclose(publicKeyFp);
+            publicKeyFile.close();
+            return;
+        }
         if (i2d_PUBKEY_fp(publicKeyFp, pkey.get()) <= 0) {
             char err_buf[256];
             ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
@@ -499,6 +532,14 @@ void KeyManagerWindow::generateAndSaveKey() {
             return;
         }
     } else if (format == "PKCS#8") {
+        if (keyType == "Ed25519") {
+            errorHandler->handleError(this, tr("Generate Key"),
+                                      tr("PKCS#8 format is not supported for Ed25519 public keys"),
+                                      ForensicErrorHandler::Severity::Warning);
+            fclose(publicKeyFp);
+            publicKeyFile.close();
+            return;
+        }
         if (!PEM_write_PUBKEY(publicKeyFp, pkey.get())) {
             char err_buf[256];
             ERR_error_string_n(ERR_get_error(), err_buf, sizeof(err_buf));
@@ -767,8 +808,4 @@ void KeyManagerWindow::changeLanguage(const QString &locale) {
         delete translator;
         translator = nullptr;
     }
-}
-
-bool KeyManagerWindow::validateKeyType(const QString &keyType) const {
-    return keyType == "RSA" || keyType == "ECDSA" || keyType == "Ed25519";
 }
